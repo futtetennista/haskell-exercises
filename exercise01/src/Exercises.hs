@@ -22,14 +22,14 @@ instance Countable Bool where count x = if x then 1 else 0
 -- | a. Build a GADT, 'CountableList', that can hold a list of 'Countable'
 -- things.
 
-data CountableList  where
+data CountableList where
   CountableEmpty  :: CountableList
   CountableCons   :: Countable a => a -> CountableList -> CountableList
 
--- How is the previous GADTs desugared? Not like this
-data CountableList'
-  = CountableEmpty'
-  | CountableCons' (forall a. Countable a => a) CountableList'
+-- How is the previous GADTs desugared? Not like this but then how?!
+-- data CountableList
+--   = CountableEmpty
+--   | CountableCons (forall a. Countable a => a) CountableList
 
 -- | b. Write a function that takes the sum of all members of a 'CountableList'
 -- once they have been 'count'ed.
@@ -137,12 +137,14 @@ transformable2 = TransformWith (uncurry (++)) ("Hello,", " world!")
 
 -- | b. Could we write an 'Eq' instance for 'TransformableTo'? What would we be
 -- able to check?
+
 instance Eq output => Eq (TransformableTo output) where
   TransformWith f x == TransformWith f' x'
     = f x == f' x'
 
 -- | c. Could we write a 'Functor' instance for 'TransformableTo'? If so, write
 -- it. If not, why not?
+
 instance Functor TransformableTo where
   fmap f (TransformWith g x)
     = TransformWith f (g x)
@@ -159,16 +161,20 @@ data EqPair where
 
 -- | a. There's one (maybe two) useful function to write for 'EqPair'; what is
 -- it?
+
 isEq :: EqPair -> Bool
 isEq (EqPair x y) = x == y
 
 -- | b. How could we change the type so that @a@ is not existential? (Don't
 -- overthink it!)
+
 data EqPair' a where
   EqPair' :: Eq a => a -> a -> EqPair' a
 
 -- | c. If we made the change that was suggested in (b), would we still need a
 -- GADT? Or could we now represent our type as an ADT?
+
+-- with some help courtesy of -XExistentialQuantification
 data EqPair'' a = Eq a => EqPair'' a a
 
 
@@ -360,11 +366,17 @@ data Expr a where
   If        :: Expr Bool -> Expr a   -> Expr a  -> Expr a
   IntValue  :: Int                              -> Expr Int
   BoolValue :: Bool                             -> Expr Bool
+  -- BinOp     :: Expr (a -> b -> c) -> Expr a -> Expr b -> Expr c
 
 -- | a. Implement the following function and marvel at the typechecker:
 
 eval :: Expr a -> a
-eval = error "Implement me"
+eval = \case
+  Equals x y  -> eval x == eval y
+  Add x y     -> eval x + eval y
+  If p x y    -> if eval p then eval x else eval y
+  IntValue x  -> x
+  BoolValue x -> x
 
 -- | b. Here's an "untyped" expression language. Implement a parser from this
 -- into our well-typed language. Note that (until we cover higher-rank
@@ -378,11 +390,17 @@ data DirtyExpr
   | DirtyBoolValue Bool
 
 parse :: DirtyExpr -> Maybe (Expr Int)
-parse = error "Implement me"
+parse = \case
+  DirtyAdd (DirtyIntValue x) (DirtyIntValue y) -> Just (IntValue (x + y))
+  DirtyIntValue x                              -> Just (IntValue x)
+  _                                            -> Nothing
 
 -- | c. Can we add functions to our 'Expr' language? If not, why not? What
 -- other constructs would we need to add? Could we still avoid 'Maybe'?
 
+-- We could have a more general `BinOp` constructor to encode more binary ops
+-- data Expr a where
+--   ... BinOp :: Expr (a -> b -> c) -> Expr a -> Expr b -> Expr c
 
 
 
@@ -398,12 +416,18 @@ parse = error "Implement me"
 -- long as the input of one lines up with the output of the next.
 
 data TypeAlignedList a b where
-  -- ...
+  TypeAlignedNil :: TypeAlignedList a a
+  TypeAlignedCons :: (a -> c) -> TypeAlignedList c b -> TypeAlignedList a b
 
 -- | b. Which types are existential?
+-- `a -> c`, `TypeAlignedList c b` b/c `c` is existential
 
 -- | c. Write a function to append type-aligned lists. This is almost certainly
 -- not as difficult as you'd initially think.
 
 composeTALs :: TypeAlignedList b c -> TypeAlignedList a b -> TypeAlignedList a c
-composeTALs = error "Implement me, and then celebrate!"
+composeTALs bcl abl = TypeAlignedCons (tof abl) bcl
+  where
+    tof :: TypeAlignedList a b -> (a -> b)
+    tof TypeAlignedNil         = id
+    tof (TypeAlignedCons f fs) = tof fs . f
