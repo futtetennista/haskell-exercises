@@ -10,6 +10,11 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FunctionalDependencies #-}
 
 module Exercises where
 
@@ -17,7 +22,7 @@ import           Data.Kind     (Constraint, Type)
 import           Data.Function ((&))
 import qualified GHC.TypeLits   as T
 import           Prelude        hiding ((!!))
-
+import           GHC.Exts       (Any)
 
 
 {- ONE -}
@@ -165,24 +170,114 @@ tail (HCons _ xs) = xs
 
 data Vector_ (n :: T.Nat) (a :: Type) = VNil_ | VCons_ a (Vector_ n a)
 
-data HList_ (idx :: T.Nat) (types :: List Type) where
-  HNil_  :: HList_ 0 'Nil
-  HCons_ :: a -> HList_ n xs -> HList_ (n T.+ 1) ('Cons a xs)
+data HList_ (n :: Nat) (types :: List Type) where
+  HNil_  :: HList_ 'Z 'Nil
+  HCons_ :: a -> HList_ n xs -> HList_ ('S n) ('Cons a xs)
 
-data Fin (n :: T.Nat) where
-  FinZ :: Fin (n T.+ 1)
-  FinS :: Fin n -> Fin (n T.+ 1)
+-- take :: Int -> [a] -> [a]
+-- take 0 _      = []
+-- take _ []     = []
+-- take n (x:xs) = x : take (n - 1) xs
 
-type family Foo (fin :: T.Nat) (n :: T.Nat) where
-  Foo 1 n =   0
-  -- Foo n n = n T.- 1
+type family Take (n :: Nat) (m :: Nat) (xs :: List Type) = (ys :: Type) where
+  Take 'Z n list  = HList_ 'Z 'Nil
+  Take n  'Z 'Nil = HList_ 'Z 'Nil
+  Take n  m xs    = HList_  (Min n m) (TakeList n xs)
 
--- takeHList_ :: Fin n -> HList_ n ts -> HList_ (Foo n n) ts
--- takeHList_ FinZ HNil_ = HNil_
--- takeHList_ (FinS n) (HCons_ x xs) = HCons_ x (takeHList_ n xs)
+type family TakeList (n :: Nat) (types :: List Type) = (types' :: List Type) where
+  TakeList 'Z     'Nil         = 'Nil
+  TakeList 'Z     ('Cons t ts) = 'Nil
+  TakeList ('S n) 'Nil         = 'Nil
+  TakeList ('S n) ('Cons t ts) = 'Cons t (TakeList n ts)
+
+type family Length (xs :: List Type) :: Nat where
+  Length 'Nil        = 'Z
+  Length (Cons _ xs) = 'S (Length xs)
+
+type family Min (n :: Nat) (m :: Nat) :: Nat where
+  Min 'Z     n      = 'Z
+  Min n      'Z     = 'Z
+  Min ('S n) ('S m) = Min n m
+
+-- takeH' :: SNat n -> HList_ m ts -> Take n ts
+-- takeH' SZero hlist = HNil_
+-- takeH' _     HNil_ = HNil_
+-- takeH' (SSucc n) (HCons_ x xs) = HCons_ x (takeH' n xs)
+
+class TakeHList_ (n :: Nat) (ts :: List Type) where
+  takeH :: SNat n -> HList_ m ts -> Take n m ts
+
+instance TakeHList_ 'Z xs where
+  takeH SZero _hlist = HNil_
+
+instance TakeHList_ n 'Nil where
+  takeH n HNil_ = HNil_
+
+instance (TakeHList_ n xs) => TakeHList_ ('S n) ('Cons x xs) where
+  takeH (SSucc n) (HCons_ x xs) = HCons_ x (takeH n xs)
+
+-- data Fin (n :: T.Nat) where
+--   FinZ :: Fin (n T.+ 1)
+--   FinS :: Fin n -> Fin (n T.+ 1)
+
+type family TakeMin (n :: Nat) (m :: Nat) :: Nat where
+  TakeMin 'Z     n      = 'Z
+  TakeMin n      'Z     = 'Z
+  TakeMin ('S n) ('S m) = TakeMin n m
+
+type family LessThan (n :: Nat) (m :: Nat) :: Bool where
+  LessThan 'Z     ('S n) = 'True
+  LessThan ('S n) 'Z     = 'False
+  LessThan ('S n) ('S m) = LessThan n m
+
+class SingE (a :: k) where
+  type Demote a :: Type
+  fromSing :: Sing a -> Demote (a' :: k)
+
+data family Sing (a :: k)
+
+instance SingE (a :: Nat) where
+  type Demote a = Nat
+  fromSing SZero     = Z
+  fromSing (SSucc n) = S (fromSing n)
+
+
+-- class TakeHList_ (n :: Nat) (ts :: List Type) (ts' :: List Type) | n ts -> ts' where
+--   takeH :: (TakeList n ts ~ ts', TakeMin n m ~ n') => SNat n -> HList_ m ts -> HList_ n' ts'
+
+-- instance TakeHList_ 'Z xs 'Nil where
+--   takeH _ _ = HNil_
+
+-- instance TakeHList_ n 'Nil 'Nil where
+--   takeH _ HNil_ = HNil_
+
+-- instance (TakeHList_ n xs xs', TakeList n xs ~ xs', SPred n n')
+--   => TakeHList_ ('S n) (Cons x xs) (Cons x xs') where
+--   takeH n (HCons_ x xs) = HCons_ x (takeH (spred n) xs)
+
+class SPred (n :: Nat) (m :: Nat) | n -> m where
+  spred :: SNat ('S n) -> SNat n
+
+
+-- class SPred ('S n) n where
+--   spred = const undefined
+
+-- takeHList_
+--   :: (TakeList n ts ~ ts', TakeMin n m ~ n')
+--   => SNat n
+--   -> HList_ m ts
+--   -> HList_ n' ts'
+-- takeHList_  n = takeHList_' (fromSing n)
+--   where
+--     takeHList_'
+--       :: Nat
+--       -> HList_ m ts
+--       -> HList_ n' ts'
+--     takeHList_' Z      hl            = _
+    -- takeHList_' (S n) (HCons_ x xs) = HCons_ x (takeHList_' n xs)
 
 -- class TakeHList_ a where
---   takeHList_
+--   takeHList
 --     :: forall (n :: T.Nat) (m :: T.Nat) (ts :: List Type)
 --     . (n T.<= m)
 --     => HList_ m ts
@@ -231,6 +326,7 @@ data BlogAction' (admin :: User) where
 
 -- | b. Write a 'BlogAction' list type that requires all its members to be
 -- the same "access level": "admin" or "non-admin".
+
 
 data BlogActionList (isSafe :: User) where
   BANil :: BlogActionList isSafe
@@ -282,7 +378,8 @@ data SBool (value :: Bool) where
 
 -- | a. Write a singleton type for natural numbers:
 
-data SNat (value :: Nat) where
+type SNat (a :: Nat) = Sing a
+data instance Sing (value :: Nat) where
   SZero :: SNat 'Z
   SSucc :: SNat n -> SNat ('S n)
 
@@ -343,12 +440,45 @@ myApp
 -- write to the file unless it's open. This exercise is a bit brain-bending;
 -- why? How could we make it more intuitive to write?
 
+data Program' (fh :: FileHandle) result where
+  OpenFile'  :: Program' 'FileHandleOpened result -> Program' 'FileHandleClosed result
+  WriteFile' :: String -> Program' 'FileHandleOpened result -> Program' 'FileHandleOpened result
+  ReadFile'  :: Program' 'FileHandleOpened result -> (String -> Program' 'FileHandleOpened result)
+  CloseFile' :: Program' 'FileHandleClosed result -> Program' 'FileHandleOpened result
+  Exit'      :: result -> Program' 'FileHandleClosed result
+
+data FileHandle
+  = FileHandleOpened
+  | FileHandleClosed
+
+-- enter :: Program' 'Init res
+-- enter = Enter'
+
+-- openFile :: Program' 'Init res -> Program' 'FileHandleOpened res
+-- openFile = OpenFile'
+
+-- closeFile :: Program' 'FileHandleOpened res -> Program' 'FileHandleClosed res
+-- closeFile = CloseFile'
+
+-- readFile :: (String -> Program' 'FileHandleOpened res) -> Program' 'FileHandleOpened res
+-- readFile = ReadFile'
+
+-- writeFile :: String -> Program' 'FileHandleOpened res -> Program' 'FileHandleOpened res
+-- writeFile str = WriteFile' str
+
+-- exit :: Program' 'FileHandleClosed res -> Program' 'Exited res
+-- exit = Exit'
+
 -- | EXTRA: write an interpreter for this program. Nothing to do with data
 -- kinds, but a nice little problem.
 
-interpret :: Program {- ??? -} a -> IO a
-interpret = error "Implement me?"
+program' :: Program' 'FileHandleClosed Int
+program' = OpenFile' $ WriteFile' "Foo" $ CloseFile' $ Exit' 0
 
+interpret :: Program' st a -> IO a
+interpret (OpenFile' next) = putStrLn "Opened file..." >> interpret next
+interpret (CloseFile' next) = putStrLn "Closed file..." >> interpret next
+interpret (Exit' result) = putStrLn "Session ended" >> pure result
 
 
 
